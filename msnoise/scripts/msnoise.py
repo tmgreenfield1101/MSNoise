@@ -144,19 +144,21 @@ def bugreport(ctx, sys, modules, env, all):
 
 
 @click.command()
-def populate():
+@click.option('-B', '--brutal', is_flag=True, help='Brutal mode ?')
+def populate(brutal):
     """Rapidly scan the archive filenames and find Network/Stations"""
     from ..s002populate_station_table import main
-    main()
+    main(brutal)
 
 
 @click.command()
 @click.option('-i', '--init', is_flag=True, help='First run ?')
+@click.option('-B', '--brutal', is_flag=True, help='Brutal mode ?')
 @click.pass_context
-def scan_archive(ctx, init):
+def scan_archive(ctx, init, brutal):
     """Scan the archive and insert into the Data Availability table."""
     from ..s01scan_archive import main
-    main(init, threads=ctx.obj['MSNOISE_threads'])
+    main(init, threads=ctx.obj['MSNOISE_threads'], brutal=brutal)
 
 
 @click.command()

@@ -55,16 +55,19 @@ import os
 import numpy as np
 from api import *
 
-def main():
+def main(brutal=False):
     db = connect()
     print
     print ">> Populating the Station table"
     print
     data_folder = get_config(db, 'data_folder')
     data_structure = get_config(db, 'data_structure')
-    if data_structure in ["SDS", "IDDS"]:
+    stations = []
+    if brutal:
+        stations = get_stations_from_data_availability(db)
+
+    elif data_structure in ["SDS", "IDDS"]:
         datalist = sorted(glob.glob(os.path.join(data_folder, "*", "*", "*")))
-        stations = []
         for di in datalist:
             tmp = os.path.split(di)
             sta = tmp[1]
@@ -73,7 +76,6 @@ def main():
         del datalist
     elif data_structure in ["BUD", ]:
         datalist = sorted(glob.glob(os.path.join(data_folder, "*", "*",)))
-        stations = []
         for di in datalist:
             tmp = os.path.split(di)
             sta = tmp[1]
@@ -82,7 +84,6 @@ def main():
         del datalist
     elif data_structure in ["PDF", ]:
         datalist = sorted(glob.glob(os.path.join(data_folder, "*", "*",)))
-        stations = []
         for di in datalist:
             tmp = os.path.split(di)
             sta = tmp[1]

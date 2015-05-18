@@ -47,7 +47,7 @@ from api import *
 from data_structures import data_structure
 
 
-def worker(files, folder, startdate, enddate):
+def worker(files, folder, startdate, enddate, net):
     # logging = logging.getlogging('worker')
 
     db = connect()
@@ -82,9 +82,12 @@ def worker(files, folder, startdate, enddate):
                         endtime = trace.stats.endtime
                         stop = trace.stats.endtime.datetime
 
-                net = trace.stats.network.upper()
+                if trace.stats.network != "":
+                    net = trace.stats.network.upper()
+
                 sta = trace.stats.station.upper()
                 comp = trace.stats.channel.upper()
+                sampling_rate = np.round(data[0].stats.sampling_rate)
                 path = folder.replace('\\', '/')
                 r1 = time.time()
                 starttime = starttime.datetime.replace(microsecond=0)
@@ -92,7 +95,7 @@ def worker(files, folder, startdate, enddate):
                 result = update_data_availability(
                     db, net, sta, comp, path, name, starttime,
                     endtime, data_duration, gaps_duration,
-                    data[0].stats.sampling_rate)
+                    sampling_rate)
                 time.sleep(0.01)
 
                 #~ r2 = time.time()
@@ -109,7 +112,7 @@ def worker(files, folder, startdate, enddate):
         db.close()
 
 
-def main(init=False, threads=1):
+def main(init=False, threads=1, brutal=False):
     t = time.time()
 
     multiprocessing.log_to_stderr()
@@ -148,10 +151,31 @@ def main(init=False, threads=1):
     enddate = get_config(db, 'enddate')
     enddate = datetime.datetime.strptime(enddate, '%Y-%m-%d').date()
 
+    net = get_config(db, "network")
     data_folder = get_config(db, 'data_folder')
     data_struc = get_config(db, 'data_structure')
     channels = [c for c in get_config(db, 'channels').split(',')]
-    folders_to_glob = []
+
+    clients = []
+    if brutal:
+        for root, dirs, files in os.walk(data_folder, topdown=True):
+            client = Process(target=worker, args=([files, root,
+                                                   startdate, enddate, net]))
+            client.start()
+            clients.append(client)
+            while len(clients) >= nthreads:
+                for client in clients:
+                    client.join(0.01)
+                    if not client.is_alive():
+                        client.join(0.01)
+                        clients.remove(client)
+        while len(clients) != 0:
+            for client in clients:
+                client.join(0.01)
+                if not client.is_alive():
+                    client.join(0.01)
+                    clients.remove(client)
+        return
     if data_struc in data_structure.keys():
         rawpath = data_structure[data_struc]
     else:
@@ -164,6 +188,8 @@ def main(init=False, threads=1):
         else:
             print "No file named custom.py in the %s folder" % os.getcwd()
             return
+
+    folders_to_glob = []
     for year in range(startdate.year, min(datetime.datetime.now().year, enddate.year) + 1):
         for channel in channels:
             stafol = os.path.split(rawpath)[0].replace('YEAR', "%04i" % year).replace('DAY', '*').replace(
@@ -173,7 +199,6 @@ def main(init=False, threads=1):
                 'NET', sta.net).replace('STA', sta.sta))
                 folders_to_glob.append(tmp)
 
-    clients = []
     for fi in sorted(folders_to_glob):
         folders = glob.glob(fi)
         for folder in sorted(folders):
@@ -196,7 +221,7 @@ def main(init=False, threads=1):
             if len(files) != 0:
                 logging.info('Started: %s' % folder)
                 client = Process(target=worker, args=([files, folder,
-                                                       startdate, enddate]))
+                                                       startdate, enddate, net]))
                 client.start()
                 clients.append(client)
             while len(clients) >= nthreads:

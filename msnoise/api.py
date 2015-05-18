@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import scipy.fftpack
 from obspy.core import Stream, Trace, read, AttribDict
-from obspy.signal import cosTaper
+from obspy.signal.invsim import cosine_taper
 
 from obspy.core.util import gps2DistAzimuth
 
@@ -294,6 +294,23 @@ def get_stations(session, all=False, net=None):
             stations = stations.filter(Station.net == net).order_by(Station.net).order_by(Station.sta)
     return stations
 
+def get_stations_from_data_availability(session):
+    """
+    Get Stations from the database.
+
+    :type session: :class:`sqlalchemy.orm.session.Session`
+    :param session: A :class:`~sqlalchemy.orm.session.Session` object, as
+        obtained by :func:`connect`
+    :param session:
+
+    :return: list of string
+    """
+    q = session.query(DataAvailability)
+    stations = q.group_by(
+                DataAvailability.net,
+                DataAvailability.sta,).all()
+    stations = ["%s_%s" % (s.net, s.sta) for s in stations]
+    return stations
 
 def get_station(session, net, sta):
     """Get one Station from the database.
