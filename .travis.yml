@@ -9,18 +9,8 @@ matrix:
     # do one build run with our minimum dependencies
     # (or, well, at least the lowest version number that is available through
     #  anaconda..)
-    - os: linux
-      env: PYTHON_VERSION=2.7
-
-    - os: linux
+    - os: windows
       env: PYTHON_VERSION=3.6
-
-    - os: osx
-      env: PYTHON_VERSION=2.7
-
-    - os: osx
-      env: PYTHON_VERSION=3.6
-
 
 sudo: false
 
