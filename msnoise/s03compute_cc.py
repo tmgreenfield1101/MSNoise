@@ -121,14 +121,14 @@ To run this script:
 
 .. code-block:: sh
 
-    $ msnoise compute_cc
+    $ msnoise cc compute_cc
 
 
 This step also supports parallel processing/threading:
 
 .. code-block:: sh
 
-    $ msnoise -t 4 compute_cc
+    $ msnoise -t 4 cc compute_cc
 
 will start 4 instances of the code (after 1 second delay to avoid database
 conflicts). This works both with SQLite and MySQL but be aware problems
@@ -157,7 +157,8 @@ could occur with SQLite.
 """
 import sys
 import time
-
+import scipy.fft as sf
+from scipy.fft import next_fast_len
 from .api import *
 from .move2obspy import myCorr
 from .move2obspy import whiten
@@ -221,10 +222,8 @@ def main(loglevel="INFO"):
 
         comps = []
         for comp in params.all_components:
-            if comp[0] in ["Z", "E", "N", "1", "2"]:
-                comps.append(comp[0])
-            if comp[1] in ["Z", "E", "N", "1", "2"]:
-                comps.append(comp[1])
+            comps.append(comp[0])
+            comps.append(comp[1])
             for c in comp:
                 if c in ["R", "T"]:
                     comps.append("E")
@@ -378,12 +377,11 @@ def main(loglevel="INFO"):
                         filterid = filterdb.ref
                         low = float(filterdb.low)
                         high = float(filterdb.high)
-                        rms_threshold = filterdb.rms_threshold
 
                         trames2hWb = np.zeros((2, int(nfft)), dtype=np.complex)
                         skip = False
                         for i, station in enumerate(pair):
-                            if tmp[i].data.std() > rms_threshold:
+                            if tmp[i].data.std() > 0:
                                 if whitening:
                                     #logger.debug("Whitening %s" % components)
                                     trames2hWb[i] = whiten(tmp[i].data, nfft,
@@ -398,7 +396,7 @@ def main(loglevel="INFO"):
                             else:
                                 skip = True
                                 logger.debug('Slice RMS is smaller (%e) than rms_threshold (%e)!'
-                                              % (tmp[i].data.std(), rms_threshold))
+                                              % (tmp[i].data.std(), 0))
                         if not skip:
                             corr = myCorr(trames2hWb, np.ceil(params.maxlag / dt), plot=False, nfft=nfft)
                             if not np.all(np.isfinite(corr)):
@@ -420,7 +418,7 @@ def main(loglevel="INFO"):
                                 allcorr[ccfid][thistime] = corr
 
                             del corr, thistime, trames2hWb, tmptime
-                        del low, high, rms_threshold
+                        del low, high
                     del tmp, tmp1, tmp2
 
                 if params.keep_all:
@@ -456,7 +454,6 @@ def main(loglevel="INFO"):
 
             logger.info("Finished processing this pair. It took %.2f seconds" % (time.time() - tt))
         massive_update_job(db, jobs, "D")
-        clean_scipy_cache()
 
         logger.info("Job Finished. It took %.2f seconds (preprocess: %.2f s & process %.2f s)" % ((time.time() - jt), start_processing-jt, time.time()-start_processing))
         del stream

@@ -56,17 +56,11 @@ def main():
     logging.info('*** Starting: Compute STR ***')
 
     db = connect()
-    components_to_compute = get_components_to_compute(db)
-
-    mov_stack = get_config(db, "mov_stack")
-    if mov_stack.count(',') == 0:
-        mov_stacks = [int(mov_stack), ]
-    else:
-        mov_stacks = [int(mi) for mi in mov_stack.split(',')]
     params = get_params(db)
-    goal_sampling_rate = float(get_config(db, "cc_sampling_rate"))
-    maxlag = float(get_config(db, "maxlag"))
-    export_format = get_config(db, 'export_format')
+    mov_stacks = params.mov_stack
+    goal_sampling_rate = params.cc_sampling_rate
+    maxlag = params.maxlag
+    export_format = params.export_format
     if export_format == "BOTH":
         extension = ".MSEED"
     else:
@@ -102,13 +96,9 @@ def main():
         logging.info(
             "There are STR (MWCS) jobs for some days to recompute for %s" % pair)
         
-        ref_name = pair.replace('.', '_').replace(':', '_')
-        sta1, sta2 = pair.split(':')
-        station1 = sta1.split(".")
-        station2 = sta2.split(".")
+        ref_name = pair.replace(':', '_')
+        station1, station2 = pair.split(":")
 
-        station1 = get_station(db, station1[0], station1[1])
-        station2 = get_station(db, station2[0], station2[1])
 
         dtt_lag = get_config(db, "dtt_lag")
         dtt_v = float(get_config(db, "dtt_v"))
@@ -132,7 +122,7 @@ def main():
                         rf = os.path.join("STACKS", "%02i" %
                                           filterid, "REF", components, ref_name + extension)
                         if os.path.isfile(rf):
-                            ref = read(rf)[0].data
+                            ref = get_ref(db, station1, station2, filterid, components, params).data
                             mid = int(goal_sampling_rate*maxlag)
                             ref[mid-int(minlag*goal_sampling_rate):mid+int(minlag*goal_sampling_rate)] *= 0.
                             ref[:mid-int(maxlag2*goal_sampling_rate)] *= 0.
@@ -149,58 +139,68 @@ def main():
                         ref_stretched, deltas = stretch_mat_creation(ref,
                                                                      str_range=str_range,
                                                                      nstr=nstr)
-                        for day in days:
-                            df = os.path.join(
-                                "STACKS", "%02i" % filterid, "%03i_DAYS" %
-                                mov_stack, components, ref_name, str(day) + extension)
+                        
+                        n, data = get_results(db, station1, station2, filterid, components, days, mov_stack, format="matrix",params=params)
 
-                            if os.path.isfile(df):
-                                cur = read(df)[0].data   ### read the current mseed file ###
-                                cur[mid-int(minlag*goal_sampling_rate):mid+int(minlag*goal_sampling_rate)] *= 0.
-                                cur[:mid-int(maxlag2*goal_sampling_rate)] *= 0.
-                                cur[mid+int(maxlag2*goal_sampling_rate):] *= 0.  ### replace with zeroes at all
-                                                                                 ### times outside minlag to maxlag
-                                logging.debug(
-                                    'Processing Stretching for: %s.%s.%02i - %s - %02i days' %
-                                    (ref_name, components, filterid, day, mov_stack))
+                        for i, cur in enumerate(data):
+                            if np.all(np.isnan(cur)):
+                                continue
+    
+                            cur[mid-int(minlag*goal_sampling_rate):mid+int(minlag*goal_sampling_rate)] *= 0.
+                            cur[:mid-int(maxlag2*goal_sampling_rate)] *= 0.
+                            cur[mid+int(maxlag2*goal_sampling_rate):] *= 0.  ### replace with zeroes at all
+                                                                             ### times outside minlag to maxlag
+                            logging.debug(
+                                'Processing Stretching for: %s.%s.%02i - %s - %02i days' %
+                                (ref_name, components, filterid, days[i], mov_stack))
 
-                                coeffs =[]
-                                for i in range(ref_stretched.shape[0]):
-                                    ci = np.corrcoef(cur,ref_stretched[i])[0,1]
-                                    coeffs.append(ci)
+                            coeffs =[]
+                            for j in range(ref_stretched.shape[0]):
+                                ci = np.corrcoef(cur,ref_stretched[j])[0,1]
+                                coeffs.append(ci)
 
-                                tday = datetime.datetime.strptime(day, "%Y-%m-%d")
-                                alldays.append(tday)
-                                alldeltas.append(deltas[np.argmax(coeffs)])
-                                allcoefs.append(np.max(coeffs))
+                            tday = datetime.datetime.strptime(days[i], "%Y-%m-%d")
+                            alldays.append(tday)
+                            alldeltas.append(deltas[np.argmax(coeffs)])
+                            allcoefs.append(np.max(coeffs))
 
-                                ###### gaussian fit ######
-                                def gauss_function(x, a, x0, sigma):
-                                    return a*np.exp(-(x-x0)**2/(2*sigma**2))
-                                x = ar(range(len(coeffs)))
-                                ymax_index = coeffs.index(np.max(coeffs))
-                                ymin = np.min(coeffs)
-                                coeffs_shift = []
-                                for i in coeffs:
-                                    i += np.absolute(ymin) # make all points above zero
-                                    coeffs_shift.append(i)
-                                n = len(coeffs)
-                                x0 = sum(x)/n
-                                sigma = (sum((x-x0)**2)/n)**0.5
-                                try:
-                                    popt, pcov = curve_fit(gauss_function, x, coeffs_shift, [ymax_index, x0, sigma])
-                                    FWHM = 2 * ((2*np.log(2))**0.5)*popt[2] # convert sigma (popt[2]) to FWHM
-                                    error = FWHM / 2  ### error is half width at full maximum
-                                except RuntimeError:
-                                    error = np.nan # gaussian fit failed
+                            ###### gaussian fit ######
+                            def gauss_function(x, a, x0, sigma):
+                                return a*np.exp(-(x-x0)**2/(2*sigma**2))
+                            x = ar(range(len(coeffs)))
+                            ymax_index = coeffs.index(np.max(coeffs))
+                            ymin = np.min(coeffs)
+                            coeffs_shift = []
+                            for j in coeffs:
+                                j += np.absolute(ymin) # make all points above zero
+                                coeffs_shift.append(j)
+                            n = len(coeffs)
+                            x0 = sum(x)/n
+                            sigma = (sum((x-x0)**2)/n)**0.5
+                            try:
+                                popt, pcov = curve_fit(gauss_function, x, coeffs_shift, [ymax_index, x0, sigma])
+                                FWHM = 2 * ((2*np.log(2))**0.5)*popt[2] # convert sigma (popt[2]) to FWHM
+                                error = FWHM / 2  ### error is half width at full maximum
+                            except RuntimeError:
+                                error = np.nan # gaussian fit failed
 
-                                allerrs.append(error)
+                            allerrs.append(error)
 
                         df = pd.DataFrame(np.array([alldeltas,allcoefs,allerrs]).T, index=alldays, columns=["Delta", "Coeff", "Error"],)
                         output = os.path.join('STR', "%02i" % filterid, "%03i_DAYS" % mov_stack, components)
                         if not os.path.isdir(output):
                             os.makedirs(output)
-                        df.to_csv(os.path.join(output, "%s.csv" % ref_name), index_label="Date")
+                        fn = os.path.join(output, "%s.csv" % ref_name)
+                        if not os.path.isfile(fn):
+                            df.to_csv(fn, index_label="Date")
+                        else:
+                            dest = pd.read_csv(fn, index_col=0,
+                                               parse_dates=True)
+                            final = pd.concat([dest, df])
+                            final = final[~final.index.duplicated(keep='last')]
+                            final = final.sort_index()
+                            final.to_csv(fn, index_label="Date")
+                            # df.to_csv(os.path.join(output, "%s.csv" % ref_name), index_label="Date")
 
         # THIS SHOULD BE IN THE API
         updated = False

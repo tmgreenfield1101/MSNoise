@@ -2,13 +2,12 @@ MSNoise
 =======
 A Python Package for Monitoring Seismic Velocity Changes using Ambient Seismic Noise.
 
-CI Builds: [![Build Status](https://travis-ci.org/ROBelgium/MSNoise.png)](https://travis-ci.org/ROBelgium/MSNoise)
-[![Build status](https://ci.appveyor.com/api/projects/status/82k4dw58jhadfung?svg=true)](https://ci.appveyor.com/project/ThomasLecocq/msnoise)
+CI Builds: [![Github Action Status](https://github.com/ROBelgium/MSNoise/actions/workflows/test_full.yml/badge.svg)](https://github.com/ROBelgium/MSNoise/actions)
 [![codecov](https://codecov.io/gh/ROBelgium/MSNoise/branch/master/graph/badge.svg)](https://codecov.io/gh/ROBelgium/MSNoise)
 
 PyPI: [![PyPI version](https://badge.fury.io/py/msnoise.svg)](https://pypi.org/project/msnoise/) [![PyPI downloads](https://img.shields.io/pypi/dm/msnoise.svg)](https://pypi.org/project/msnoise/)
 
-Conda: [![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/msnoise.svg)](https://anaconda.org/conda-forge/msnoise) [![Conda Version](https://img.shields.io/conda/vn/conda-forge/msnoise.svg)](https://anaconda.org/conda-forge/msnoise) [![Conda Platforms](https://img.shields.io/conda/pn/conda-forge/msnoise.svg)](https://anaconda.org/conda-forge/msnoise)
+Conda: [![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/msnoise.svg)](https://anaconda.org/conda-forge/msnoise) [![Conda Version](https://anaconda.org/conda-forge/msnoise/badges/version.svg)](https://anaconda.org/conda-forge/msnoise) [![Conda Platforms](https://img.shields.io/conda/pn/conda-forge/msnoise.svg)](https://anaconda.org/conda-forge/msnoise)
 
 MSNoise is the first complete software package for computing and monitoring relative velocity variations using ambient seismic noise. 
 MSNoise is a fully-integrated solution that automatically scans data archives and determines which jobs need to be done whenever the scheduled task is executed. 
@@ -44,6 +43,11 @@ Remember, always consider the current GitHub *master* as not stable!
 
 Getting Help
 ------------
+
+✨ We are trying to move the MSNoise help to https://github.com/ROBelgium/MSNoise/discussions the GitHub Discussions, so everything will be grouped here. For now, the mailing list (below) will still work, as well as the Gitter Chat, but try to use either the Discussions and the Gitter for questions !✨
+
+--
+
 The best way to get help is to subscribe to the Mailing List and ask your question directly there. It is available on 
 http://mailman-as.oma.be/mailman/listinfo/msnoise and the archive is http://mailman-as.oma.be/pipermail/msnoise/ or https://www.mail-archive.com/msnoise@mailman-as.oma.be/.
 
@@ -58,7 +62,7 @@ If you use MSNoise, even a small part of it, for your research and publications,
 for Monitoring Seismic Velocity Changes Using Ambient Seismic Noise,
 *Seismological Research Letters*, 85(3), 715‑726, doi:10.1785/0220130073.
 
-Thanks to all [who already did so](http://www.msnoise.org/they-cite-msnoise)! 
+Thanks to all [who already did so](https://scholar.google.com/scholar?oi=bibs&hl=en&cites=7742894338804325257)! 
 
 Disclaimer
 ----------
@@ -73,3 +77,4 @@ Licence
 MSNoise is released under EUPL v1.1
 
 [![Analytics](https://ga-beacon.appspot.com/UA-55331253-1/MSNoise/readme)](https://github.com/ROBelgium/MSNoise)
+

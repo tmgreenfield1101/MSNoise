@@ -1,6 +1,21 @@
 from setuptools import setup, find_packages
+import os
+import sys
+import inspect
 
-setup(version="1.6.2",
+
+SETUP_DIRECTORY = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+
+UTIL_PATH = os.path.join(SETUP_DIRECTORY, "msnoise")
+sys.path.insert(0, UTIL_PATH)
+
+if UTIL_PATH:   # To avoid PEP8 E402
+    from _version import get_git_version  # @UnresolvedImport
+
+sys.path.pop(0)
+
+
+setup(version=get_git_version(),
       name='msnoise',
       packages=find_packages(),
       include_package_data=True,
@@ -10,7 +25,7 @@ setup(version="1.6.2",
           'scipy',
           'pandas',
           'matplotlib',
-          'sqlalchemy',
+          'sqlalchemy<2', # TEMP needed as it breaks flask-admin
           'obspy',
           'click',
           'pymysql',
@@ -22,13 +37,15 @@ setup(version="1.6.2",
           'wtforms',
           'jinja2',
           'scandir',  # useful for python < 3.5
-          'logbook'
+          'logbook',
+          'xarray'  # new in 2.0
       ],
       extras_require={
           'doc': [
-              'sphinx>=1.6.1',
-              'sphinx_bootstrap_theme>=0.5.0',
+              'sphinx',
+              'sphinx_bootstrap_theme',
               'numpydoc',
+              'sphinx_gallery'
               ],
           },
       entry_points='''
@@ -52,10 +69,11 @@ setup(version="1.6.2",
         'Intended Audience :: Developers',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
         'Topic :: Scientific/Engineering',
         'Topic :: Scientific/Engineering :: Physics'],
       )

@@ -17,30 +17,14 @@ import sys
 from logbook import Logger, StreamHandler
 import sys
 
-from sqlalchemy import create_engine, func
+from sqlalchemy import create_engine, func, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.expression import func
 import numpy as np
 import pandas as pd
-import scipy as sp
+import xarray as xr
 
-if sp.__version__ < "1.4.0":
-    import scipy.fftpack as sf
-    from scipy.fftpack.helper import next_fast_len
-    import scipy.fftpack._fftpack as sff
-else:
-    import scipy.fft as sf
-    from scipy.fft import next_fast_len
-
-
-# import scipy.optimize
-
-from obspy.core import Stream, Trace, read, AttribDict, UTCDateTime
-from obspy.core.inventory import Inventory
-from obspy import read_inventory
-from obspy.io.xseed import Parser
-from obspy.geodetics import gps2dist_azimuth
 
 from . import DBConfigNotFoundError
 from .msnoise_table_def import Filter, Job, Station, Config, DataAvailability
@@ -73,7 +57,7 @@ def get_logger(name, loglevel=None, with_pid=False):
     else:
         log_fmt="{record.time} msnoise [{record.level_name}]: {record.message}"
 
-    StreamHandler(sys.stdout, format_string=log_fmt, 
+    StreamHandler(sys.stdout, format_string=log_fmt,
                   level=loglevel).push_application()
     logger = Logger(name)
 
@@ -90,6 +74,8 @@ def get_engine(inifile=None):
     :rtype: :class:`sqlalchemy.engine.Engine`
     :returns: An :class:`~sqlalchemy.engine.Engine` Object
     """
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import NullPool
     dbini = read_db_inifile(inifile)
     if dbini.tech == 1:
         engine = create_engine('sqlite:///%s' % dbini.hostname, echo=False,
@@ -120,6 +106,7 @@ def connect(inifile=None):
     :returns: A :class:`~sqlalchemy.orm.session.Session` object, needed for
         many of the other API methods.
     """
+    from sqlalchemy.orm import sessionmaker
     if not inifile:
         inifile = os.path.join(os.getcwd(), 'db.ini')
 
@@ -305,7 +292,12 @@ def get_params(session):
     params.components_to_compute_single_station = get_components_to_compute_single_station(s)
     params.all_components = np.unique(params.components_to_compute_single_station + \
                             params.components_to_compute)
-    
+
+    if params.mov_stack.count(',') == 0:
+        params.mov_stack = [int(params.mov_stack), ]
+    else:
+        params.mov_stack = [int(mi) for mi in params.mov_stack.split(',')]
+
     return params
 
 # FILTERS PART
@@ -334,7 +326,7 @@ def get_filters(session, all=False):
 
 
 def update_filter(session, ref, low, mwcs_low, high, mwcs_high,
-                  rms_threshold, mwcs_wlen, mwcs_step, used):
+                  mwcs_wlen, mwcs_step, used):
     """Updates or Insert a new Filter in the database.
 
     .. seealso:: :class:`msnoise.msnoise_table_def.declare_tables.Filter`
@@ -355,8 +347,6 @@ def update_filter(session, ref, low, mwcs_low, high, mwcs_high,
     :type mwcs_high: float
     :type mwcs_high: The upper frequency bound of the linear regression done in
         WCS (in Hz)
-    :type rms_threshold: float
-    :param rms_threshold: Not used anymore
     :type mwcs_wlen: float
     :param mwcs_wlen: Window length (in seconds) to perform MWCS
     :type mwcs_step: float
@@ -371,7 +361,6 @@ def update_filter(session, ref, low, mwcs_low, high, mwcs_high,
         filter.high = high
         filter.mwcs_low = mwcs_low
         filter.mwcs_high = mwcs_high
-        filter.rms_threshold = rms_threshold
         filter.mwcs_wlen = mwcs_wlen
         filter.mwcs_step = mwcs_step
         filter.used = used
@@ -381,7 +370,6 @@ def update_filter(session, ref, low, mwcs_low, high, mwcs_high,
         filter.high = high
         filter.mwcs_low = mwcs_low
         filter.mwcs_high = mwcs_high
-        filter.rms_threshold = rms_threshold
         filter.mwcs_wlen = mwcs_wlen
         filter.mwcs_step = mwcs_step
         filter.used = used
@@ -468,7 +456,7 @@ def get_stations(session, all=False, net=None, format="raw"):
 
 def get_station(session, net, sta):
     """Get one Station from the database.
-    
+
     :type session: :class:`sqlalchemy.orm.session.Session`
     :param session: A :class:`~sqlalchemy.orm.session.Session` object, as
         obtained by :func:`connect`
@@ -491,7 +479,7 @@ def update_station(session, net, sta, X, Y, altitude, coordinates='UTM',
     """Updates or Insert a new Station in the database.
 
     .. seealso :: :class:`msnoise.msnoise_table_def.declare_tables.Station`
-    
+
     :type session: :class:`sqlalchemy.orm.session.Session`
     :param session: A :class:`~sqlalchemy.orm.session.Session` object, as
         obtained by :func:`connect`
@@ -597,7 +585,7 @@ def get_interstation_distance(station1, station2, coordinates="DEG"):
     :rtype: float
     :returns: The interstation distance in km
     """
-
+    from obspy.geodetics import gps2dist_azimuth
     if coordinates == "DEG":
         dist, azim, bazim = gps2dist_azimuth(station1.Y, station1.X,
                                              station2.Y, station2.X)
@@ -720,7 +708,7 @@ def get_data_availability(session, net=None, sta=None, loc=None, chan=None,
     :rtype: list
     :returns: list of :class:`~msnoise.msnoise_table_def.declare_tables.DataAvailability`
     """
-
+    from sqlalchemy.sql.expression import func
     if not starttime:
         data = session.query(DataAvailability).\
             filter(DataAvailability.net == net).\
@@ -784,7 +772,7 @@ def count_data_availability_flags(session):
     :rtype: list
     :returns: list of [count, flag] pairs
     """
-
+    from sqlalchemy.sql.expression import func
     return session.query(func.count(DataAvailability.flag),
                          DataAvailability.flag).\
         group_by(DataAvailability.flag).all()
@@ -817,13 +805,15 @@ def update_job(session, day, pair, jobtype, flag, commit=True, returnjob=True,
     :rtype: :class:`~msnoise.msnoise_table_def.declare_tables.Job` or None
     :returns: If returnjob is True, returns the modified/inserted Job.
     """
+    from sqlalchemy import text
     if ref:
-        job = session.query(Job).filter(Job.ref == ref).first()
+        job = session.query(Job).filter(text("ref=:ref")).params(ref=ref).first()
     else:
         job = session.query(Job)\
-            .filter(Job.day == day)\
-            .filter(Job.pair == pair)\
-            .filter(Job.jobtype == jobtype).first()
+            .filter(text("day=:day"))\
+            .filter(text("pair=:pair"))\
+            .filter(text("jobtype=:jobtype"))\
+            .params(day=day, pair=pair, jobtype=jobtype).first()
     if job is None:
         job = Job(day, pair, jobtype, 'T')
         session.add(job)
@@ -990,6 +980,7 @@ def get_dtt_next_job(session, flag='T', jobtype='DTT'):
         Days of the next DTT jobs -
         Job IDs (for later being able to update their flag).
     """
+    from sqlalchemy.sql.expression import func
     if read_db_inifile().tech == 2:
         rand = func.rand
     else:
@@ -1079,7 +1070,7 @@ def get_job_types(session, jobtype='CC'):
     :rtype: list
     :returns: list of [count, flag] pairs
     """
-
+    from sqlalchemy.sql.expression import func
     return session.query(func.count(Job.flag), Job.flag).\
         filter(Job.jobtype == jobtype).group_by(Job.flag).all()
 
@@ -1142,7 +1133,7 @@ def add_corr(session, station1, station2, filterid, date, time, duration,
              components, CF, sampling_rate, day=False, ncorr=0, params=None):
     """
     Adds a CCF to the data archive on disk.
-    
+
     :type session: :class:`sqlalchemy.orm.session.Session`
     :param session: A :class:`~sqlalchemy.orm.session.Session` object, as
         obtained by :func:`connect`
@@ -1172,7 +1163,7 @@ def add_corr(session, station1, station2, filterid, date, time, duration,
     :param params: A dictionnary of MSNoise config parameters as returned by
         :func:`get_params`.
     """
-
+    from obspy import Stream, Trace
     output_folder = params.output_folder
     export_format = params.export_format
     sac, mseed = False, False
@@ -1217,6 +1208,8 @@ def add_corr(session, station1, station2, filterid, date, time, duration,
 def export_sac(db, filename, pair, components, filterid, corr, ncorr=0,
                sac_format=None, maxlag=None, cc_sampling_rate=None,
                params=None):
+    from obspy.core.util.attribdict import AttribDict
+    from obspy import Stream, Trace
     maxlag = params.maxlag
     cc_sampling_rate = params.goal_sampling_rate
     sac_format = params.sac_format
@@ -1251,6 +1244,7 @@ def export_sac(db, filename, pair, components, filterid, corr, ncorr=0,
 
 def export_mseed(db, filename, pair, components, filterid, corr, ncorr=0,
                  maxlag=None, cc_sampling_rate=None, params=None):
+    from obspy import Trace, Stream
     try:
         os.makedirs(os.path.split(filename)[0])
     except:
@@ -1371,6 +1365,7 @@ def get_ref(session, station1, station2, filterid, components, params=None):
     :rtype: :class:`obspy.trace`
     :return: A Trace object containing the ref
     """
+    from obspy import Trace, read
     if not params:
         export_format = get_config(session, 'export_format')
         extension = get_extension(export_format)
@@ -1418,6 +1413,7 @@ def get_results(session, station1, station2, filterid, components, dates,
     :return: Either a 1D CCF (if format is ``stack`` or a 2D array (if format=
         ``matrix``).
     """
+    from obspy import read
     if not params:
         export_format = get_config(session, 'export_format')
         extension = get_extension(export_format)
@@ -1452,6 +1448,13 @@ def get_results(session, station1, station2, filterid, components, dates,
         taxis = get_t_axis(session)
         return pd.DataFrame(stack_data, index=pd.DatetimeIndex(dates),
                             columns=taxis).loc[:lastday]
+    elif format == "xarray":
+        taxis = get_t_axis(session)
+        times = pd.DatetimeIndex(dates)
+        dr = xr.DataArray(stack_data, coords=[times, taxis],
+                          dims=["times", "taxis"]).dropna("times", how="all")
+        dr.name = "CCF"
+        return dr.to_dataset()
 
     elif format == "stack":
         logging.debug("Stacking...")
@@ -1694,14 +1697,16 @@ def updated_days_for_dates(session, date1, date2, pair, jobtype='CC',
     :returns: List of days if returndays is True, only "True" if not.
         (not clear!)
     """
+    from sqlalchemy import text
     lastmod = datetime.datetime.now() - interval
     if pair == '%':
         days = session.query(Job).\
-            filter(Job.day >= date1.strftime("%Y-%m-%d")).\
-            filter(Job.day <= date2.strftime("%Y-%m-%d")).\
+            filter(text("day>=:date1")).\
+            filter(text("day<=:date2")).\
             filter(Job.jobtype == jobtype).\
             filter(Job.lastmod >= lastmod).group_by(Job.day).\
-            order_by(Job.day).with_entities("day").all()
+            order_by(Job.day).params(date1=date1.strftime("%Y-%m-%d"),
+                                     date2=date2.strftime("%Y-%m-%d")).all()
     else:
         days = session.query(Job).filter(Job.pair == pair).\
             filter(Job.day >= date1.strftime("%Y-%m-%d")). \
@@ -1738,6 +1743,7 @@ def azimuth(coordinates, x0, y0, x1, y1):
     :rtype: float
     :returns: The azimuth in degrees
     """
+    from obspy.geodetics import gps2dist_azimuth
     if coordinates == "DEG":
         dist, azim, bazim = gps2dist_azimuth(y0, x0, y1, x1)
         return azim
@@ -1769,6 +1775,9 @@ def nextpow2(x):
 
 def check_and_phase_shift(trace, taper_length=20.0):
     # TODO replace this hard coded taper length
+
+    import scipy.fft as sf
+    from scipy.fft import next_fast_len
     if trace.stats.npts < 4 * taper_length*trace.stats.sampling_rate:
         trace.data = np.zeros(trace.stats.npts)
         return trace
@@ -1795,10 +1804,10 @@ def check_and_phase_shift(trace, taper_length=20.0):
         FFTdata = FFTdata * np.exp(1j * 2. * np.pi * fftfreq * dt)
         FFTdata = FFTdata.astype(np.complex64)
         sf.ifft(FFTdata, n=n, overwrite_x=True)
-        trace.data = np.real(FFTdata[:len(trace.data)]).astype(np.float)
+        trace.data = np.real(FFTdata[:len(trace.data)]).astype(float)
         trace.stats.starttime += dt
         del FFTdata, fftfreq
-        clean_scipy_cache()
+        # clean_scipy_cache()
         return trace
     else:
         return trace
@@ -1857,7 +1866,7 @@ def make_same_length(st):
     This function takes a stream of equal sampling rate and makes sure that all
     channels have the same length and the same gaps.
     """
-
+    from obspy import Stream
     # Merge traces
     st.merge()
 
@@ -1884,7 +1893,7 @@ def make_same_length(st):
 
     if len(st) < 2:
         return st
-    
+
     masks=[]
     for tr in st:
         masks.append(tr.data.mask)
@@ -1897,50 +1906,27 @@ def make_same_length(st):
     st = st.split()
     return st
 
-
-def clean_scipy_cache():
-    """This functions wraps all destroy scipy cache at once. It is a workaround
-    to the memory leak induced by the "caching" functions in scipy fft."""
-    if sp.__version__ >= "1.4.0":
-        return
-    sff.destroy_zfft_cache()
-    sff.destroy_zfftnd_cache()
-    sff.destroy_drfft_cache()
-    sff.destroy_cfft_cache()
-    sff.destroy_cfftnd_cache()
-    sff.destroy_rfft_cache()
-    sff.destroy_ddct2_cache()
-    sff.destroy_ddct1_cache()
-    # sff.destroy_ddct4_cache()
-    sff.destroy_dct2_cache()
-    sff.destroy_dct1_cache()
-    # sff.destroy_dct4_cache()
-    sff.destroy_ddst2_cache()
-    sff.destroy_ddst1_cache()
-    sff.destroy_dst2_cache()
-    sff.destroy_dst1_cache()
-    sf.convolve.destroy_convolve_cache()
-
-
 def preload_instrument_responses(session, return_format="dataframe"):
     """
     This function preloads all instrument responses from ``response_format``
     and stores the seed ids, start and end dates, and paz for every channel
     in a DataFrame.
-    
+
     .. warning::
         This function only works for ``response_format`` being "inventory"
         or "dataless".
-    
+
     :type session: :class:`sqlalchemy.orm.session.Session`
     :param session: A :class:`~sqlalchemy.orm.session.Session` object, as
-        obtained by :func:`connect` 
-    
+        obtained by :func:`connect`
+
     :rtype: pandas.DataFrame
     :returns: A table containing all channels with the time of operation and
         poles and zeros.
-    
+
     """
+    from obspy.core.inventory import Inventory
+    from obspy import read_inventory, UTCDateTime
     logging.debug('Preloading instrument response')
     response_format = get_config(session, 'response_format')
     files = glob.glob(os.path.join(get_config(session, 'response_path'), "*"))
@@ -2005,3 +1991,133 @@ def to_sds(stats,year, jday):
     file=file.replace('JDAY', "%03i"%jday)
     file=file.replace('TYPE', "D")
     return file
+
+## PSD part (not sure it'll end up here but easier to handle for now)
+from functools import lru_cache
+
+
+def psd_read_results(net, sta, loc, chan, datelist, format='PPSD', use_cache=True):
+    from obspy.signal import PPSD
+    if loc == "--":
+        loc = ""
+    fn = "%s.%s.%s.%s-%s_%s.npz" % (net, sta, loc, chan, datelist[0], datelist[-1])
+    import tempfile
+    fn = os.path.join(tempfile.gettempdir(), "MSNOISE-PSD", fn)
+    if use_cache and os.path.isfile(fn):
+        print("I found this cool file: %s" % fn)
+        ppsd = PPSD.load_npz(fn)
+    else:
+        first = True
+        ppsd = None
+        for day in datelist:
+            jday = int(day.strftime("%j"))
+            toglob = os.path.join('PSD', 'NPZ', "%s" % day.year, net, sta,
+                                  chan + ".D", "%s.%s.%s.%s.D.%s.%03i.npz" % (
+                                  net, sta, loc, chan, day.year, jday))
+            files = glob.glob(toglob)
+            if not len(files):
+                print("No files found for %s.%s.%s.%s: %s" % (
+                net, sta, loc, chan, day))
+                continue
+            file = files[0]
+            if os.path.isfile(file):
+                if first:
+                    ppsd = PPSD.load_npz(file)
+                    first = False
+                else:
+                    try:
+                        ppsd.add_npz(file)
+                    except:
+                        pass
+    if not ppsd:
+        return None
+    if use_cache:
+        if not os.path.isdir(os.path.split(fn)[0]):
+            os.makedirs(os.path.split(fn)[0])
+        ppsd.save_npz(fn[:-4])
+    return ppsd
+
+
+def psd_ppsd_to_dataframe(ppsd):
+    from obspy import UTCDateTime
+    ind_times = np.array(
+        [UTCDateTime(t).datetime for t in ppsd.current_times_used])
+    data = np.asarray(ppsd._binned_psds)
+    return pd.DataFrame(data, index=ind_times, columns=ppsd.period_bin_centers)
+
+
+def hdf_open_store_from_fn(fn, mode="a"):
+    store = pd.HDFStore(fn, complevel=9, complib="blosc:blosclz", mode=mode)
+    return store
+
+
+def hdf_open_store(filename, location=os.path.join("PSD", "HDF"), mode="a",
+                   format='table'):
+    if ".h5" in filename:
+        filename = filename.replace(".h5", "")
+    pd.set_option('io.hdf.default_format', format)
+    if not os.path.isdir(location):
+        os.makedirs(location)
+    fn = os.path.join(location, filename + ".h5")
+    store = pd.HDFStore(fn, complevel=9, complib="blosc:blosclz", mode=mode)
+    return store
+
+
+def hdf_insert_or_update(store, key, new):
+    if key in store:
+        filter = store[key].index.intersection(new.index)
+        if len(filter):
+            coordinates = store.select_as_coordinates(key, "index=filter")
+            store.remove(key, where=coordinates)
+            store.append(key, new, format='t', data_columns=True, append=True)
+    else:
+        store.append(key, new)
+
+
+def hdf_close_store(store):
+    store.close()
+    del store
+
+
+def xr_create_or_open(fn, taxis=[], name="CCF"):
+    if os.path.isfile(fn):
+        # load_dataset works (it loads content in mem and closes, open_dataset
+        # failed, the file handle was still open and it failed later.
+        ds = xr.load_dataset(fn)
+        return ds
+    if name == "CCF":
+        times = pd.date_range("2000-01-01", freq="H", periods=0)
+        data = np.random.random((len(times), len(taxis)))
+        dr = xr.DataArray(data, coords=[times, taxis], dims=["times", "taxis"])
+        dr.name = name
+    elif name == "MWCS":
+        times = pd.date_range("2000-01-01", freq="H", periods=0)
+        keys = ["M", "EM", "MCOH"]
+        data = np.random.random((len(times), len(taxis), len(keys)))
+        dr = xr.DataArray(data, coords=[times, taxis, keys],
+                          dims=["times", "taxis", "keys"])
+        dr.name = name
+    elif name == "DTT":
+        times = pd.date_range("2000-01-01", freq="H", periods=0)
+        keys = ["m", "em", "a", "ea", "m0", "em0"]
+        data = np.random.random((len(times), len(keys)))
+        dr = xr.DataArray(data, coords=[times, keys],
+                          dims=["times", "keys"])
+        dr.name = name
+    else:
+        print("Not implemented, name=%s invalid." % name)
+        sys.exit(1)
+    return dr.to_dataset()
+
+
+def xr_insert_or_update(dataset, new):
+    tt = new.merge(dataset, compat='override', combine_attrs="drop_conflicts")
+    return tt.combine_first(dataset)
+
+
+def xr_save_and_close(dataset, fn):
+    if not os.path.isdir(os.path.split(fn)[0]):
+        os.makedirs(os.path.split(fn)[0])
+    dataset.to_netcdf(fn, mode="w")
+    dataset.close()
+    del dataset

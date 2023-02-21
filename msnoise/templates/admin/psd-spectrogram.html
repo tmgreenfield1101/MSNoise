@@ -59,39 +59,54 @@ function populate_locations(data) {
     $('#channel').change();
 }
 
-function update(){
-    $('#dates').text("Updating...");
-    var net = $('#network option:selected').text();
+function update_images(){
+        var net = $('#network option:selected').text();
         var sta = $('#station option:selected').text();
         var loc = $('#location option:selected').text();
         var chan = $('#channel option:selected').text();
-        $.ajax({
-            url: "/admin/data_availability.json",
-            data: JSON.stringify({'net':net,'sta':sta,'loc':loc,'chan':chan}), //returns all cells' data
-            dataType: 'json',
-            contentType: 'application/json',
-            type: 'POST',
-            success: function (res) {
-              {#console.debug('%o', res);#}
-              if (res.result === 'ok') {
-                $('#dates').text(res.dates);
-            }},
-            error: function () {
-              console.debug('Something bad happened...');
-            }
-          });
-}
+        $('#timeline').empty()
+        var url = '../PSD-spectrogram.png?net='+net+'&sta='+sta+'&loc='+loc+'&chan='+chan;
 
+        var vmin = $('#vmin').val();
+        var vmax = $('#vmax').val();
+        var fmin = $('#fmin').val();
+        var fmax = $('#fmax').val();
+        var pmin = $('#pmin').val();
+        var pmax = $('#pmax').val();
+        var resample = $('#resample').val();
+        var resample_method = $('#resample_method').val();
+
+        var yaxis = $('#yaxis').val();
+        var yaxis_scale = $('#yaxis_scale').val();
+
+        if(vmin.length) url += '&vmin='+vmin;
+        if(vmax.length) url += '&vmax='+vmax;
+        if(fmin.length) url += '&fmin='+fmin;
+        if(fmax.length) url += '&fmax='+fmax;
+        if(pmin.length) url += '&pmin='+pmin;
+        if(pmax.length) url += '&pmax='+pmax;
+
+        if(resample.length) url += '&resample='+resample;
+        if(resample_method.length) url += '&resample_method='+resample_method;
+
+        if(yaxis.length) url += '&yaxis='+yaxis;
+        if(yaxis_scale.length) url += '&yaxis_scale='+yaxis_scale;
+
+        var url = '<img id="theImg" src="'+url+'"/>';
+        console.log(url);
+        $('#timeline').prepend(url);
+
+}
 
 $(document).ready(function() {
     get_network_station(populate_network);
-    
+
     $('#network').change(function() {
         $('#station')
         .find('option')
         .remove()
         .end();
-        
+
         get_network_station(populate_stations);
 
     });
@@ -106,16 +121,32 @@ $(document).ready(function() {
         .remove()
         .end();
 
+                $('#file')
+        .find('option')
+        .remove()
+        .end();
+
+                $('#date')
+        .find('option')
+        .remove()
+        .end();
+
         get_network_station(populate_locations);
 
     });
 
     $('#location').change(function() {
-        update();
+update_images();
     });
 
     $('#channel').change(function() {
-        update();
+
+update_images();
+    });
+
+        $('#refresh').click(function() {
+
+update_images();
     });
 
 });
@@ -124,14 +155,27 @@ $(document).ready(function() {
 <h1 class="page-header">{{ admin_view.view_title }}</h1>
 {#    <img src="../data_availability.png">#}
   <p>
-  Network: <select id="network" name="network" ></select><br>
+
+  Network: <select id="network" name="network" ></select>
   Station: <select id="station" name="station" ></select>
-  <br>
   Location: <select id="location" name="location" ></select>
-  <br>
   Channel: <select id="channel" name="channel" ></select>
+      <br>
+  fmin: <input type="text" id="fmin" name="fmin" >
+  fmax: <input type="text" id="fmax" name="fmax" >
+  pmin: <input type="text" id="pmin" name="pmin" >
+  pmax: <input type="text" id="pmax" name="pmax" >
+  <br>
+  vmin: <input type="text" id="vmin" name="vmin" >
+  vmax: <input type="text" id="vmax" name="vmax" >
+  resample: <input type="text" id="resample" name="resample" >
+  resample_method: <input type="text" id="resample_method" name="resample_method" >
+<br>
+  yaxis: <input type="text" id="yaxis" name="yaxis" >
+  yaxis_scale: <input type="text" id="yaxis_scale" name="yaxis_scale" >
+  <input type="button" class="danger" value="Refresh" id="refresh">
   </p>
-  Available data:<div id='dates'>
-  </div>
+    <div id="timeline" name="timeline" width="100%" height="100%"></div>
+
 
 {% endblock body %}

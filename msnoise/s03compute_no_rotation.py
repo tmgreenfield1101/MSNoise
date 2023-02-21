@@ -76,8 +76,8 @@ this step:
 Computing the Cross-Correlations
 --------------------------------
 
-Processing using ``msnoise compute_cc``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Processing using ``msnoise cc compute_cc``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. todo:: We still need to describe the workflow in plain text, but the
     following graph should help you understand how the code is structured
@@ -93,8 +93,8 @@ Processing using ``msnoise compute_cc``
 
 
 
-Processing using ``msnoise compute_cc_rot``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Processing using ``msnoise cc compute_cc_rot``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Once all traces are preprocessed, station pairs are processed sequentially.
 If a component different from *ZZ* is to be computed, the traces are first
@@ -156,14 +156,14 @@ To run this script:
 
 .. code-block:: sh
 
-    $ msnoise compute_cc
+    $ msnoise cc compute_cc
 
 
 This step also supports parallel processing/threading:
 
 .. code-block:: sh
 
-    $ msnoise -t 4 compute_cc
+    $ msnoise -t 4 cc compute_cc
 
 will start 4 instances of the code (after 1 second delay to avoid database
 conflicts). This works both with SQLite and MySQL but be aware problems
@@ -205,7 +205,10 @@ from .move2obspy import pcc_xcorr
 from .preprocessing import preprocess
 
 from scipy.stats import scoreatpercentile
+
 import scipy.signal
+import scipy.fft as sf
+from scipy.fft import next_fast_len
 from obspy.signal.filter import bandpass
 
 
@@ -219,7 +222,7 @@ def winsorizing(data, params, input="timeseries", nfft=0):
         input1D = True
     if input == "fft":
         # data = np.real(sf.ifft(data, n=nfft, axis=1))
-        data = sf.ifftn(data, [nfft, ], axes=[1, ]).astype(np.float64)
+        data = sf.ifftn(data, [nfft, ], axes=[1, ]).astype(float64)
 
     for i in range(data.shape[0]):
         if params.windsorizing == -1:
@@ -296,11 +299,10 @@ def main(loglevel="INFO"):
         jt = time.time()
 
         comps = []
+        #TODO check if comp is 3, 4 or else?
         for comp in params.all_components:
-            if comp[0] in ["Z", "E", "N", "1", "2"]:
-                comps.append(comp[0])
-            if comp[1] in ["Z", "E", "N", "1", "2"]:
-                comps.append(comp[1])
+            comps.append(comp[0])
+            comps.append(comp[1])
 
         comps = np.unique(comps)
         stream = preprocess(db, stations, comps, goal_day, params, responses)
@@ -603,8 +605,6 @@ def main(loglevel="INFO"):
                               "exiting")
                         exit(1)
             del psds
-        # Needed to clean the FFT memory caching of SciPy
-        clean_scipy_cache()
 
         if params.keep_all:
             for ccfid in allcorr.keys():

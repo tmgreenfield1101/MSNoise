@@ -3,13 +3,8 @@ import logging
 
 import numpy as np
 import scipy
-if scipy.__version__ < "1.4.0":
-    import scipy.fftpack as sf
-    from scipy.fftpack.helper import next_fast_len
-    import scipy.fftpack._fftpack as sff
-else:
-    import scipy.fft as sf
-    from scipy.fft import next_fast_len
+import scipy.fft as sf
+from scipy.fft import next_fast_len
 
 import scipy.optimize
 import scipy.signal
@@ -319,9 +314,9 @@ def smooth(x, window='boxcar', half_win=3):
     # to apply the window at the borders
     s = np.r_[x[window_len - 1:0:-1], x, x[-1:-window_len:-1]]
     if window == "boxcar":
-        w = scipy.signal.boxcar(window_len).astype('complex')
+        w = scipy.signal.windows.boxcar(window_len).astype('complex')
     else:
-        w = scipy.signal.hanning(window_len).astype('complex')
+        w = scipy.signal.windows.hann(window_len).astype('complex')
     y = np.convolve(w / w.sum(), s, mode='valid')
     return y[half_win:len(y) - half_win]
 
@@ -418,7 +413,7 @@ segment.
     delta_mcoh = []
     time_axis = []
 
-    window_length_samples = np.int(window_length * df)
+    window_length_samples = int(window_length * df)
     # try:
     #     from sf.helper import next_fast_len
     # except ImportError:

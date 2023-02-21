@@ -32,24 +32,8 @@ def main(net, sta, loc, chan, time_of_weekday=None, period_lim=None, show=False,
 
     start, end, datelist = build_movstack_datelist(db)
     first = True
-    ppsd = None
-    for day in datelist:
-        jday = int(day.strftime("%j"))
-        toglob = os.path.join('PSD', 'NPZ', "%s" % day.year, net, sta, chan+".D", "%s.%s.%s.%s.D.%s.%03i.npz"%(net, sta, loc, chan, day.year, jday))
-        files = glob.glob(toglob)
-        if not len(files):
-            print("No files found for %s.%s.%s.%s: %s" % (net,sta,loc,chan, day))
-            continue
-        file = files[0]
-        if os.path.isfile(file):
-            if first:
-                ppsd = PPSD.load_npz(file)
-                first = False
-            else:
-                try:
-                    ppsd.add_npz(file)
-                except:
-                    pass
+    ppsd = psd_read_results(net, sta, loc, chan, datelist)
+
     if not ppsd:
         # f = open(os.path.join(os.path.split(__file__)[0], "nodata.png"), 'rb').read()
         # outfile.write(f)
@@ -74,16 +58,8 @@ def main(net, sta, loc, chan, time_of_weekday=None, period_lim=None, show=False,
 
     fig.axes[0].set_title("")
     ax2 = plt.subplot(gs[2])
-    print("Creating Time Index...")
-    print(UTCDateTime(ppsd.times_processed[1]).datetime-UTCDateTime(ppsd.times_processed[0]).datetime)
-    new_times = pd.date_range(UTCDateTime(ppsd.times_processed[0]).datetime,
-                              UTCDateTime(ppsd.times_processed[-1]).datetime,
-                              freq="1H")
 
-    ind_times = np.array([UTCDateTime(t).datetime for t in ppsd.current_times_used])
-    data = np.asarray(ppsd._binned_psds)
-    print("Creating DataFrame...")
-    data = pd.DataFrame(data, index=ind_times)
+    data = psd_ppsd_to_dataframe(ppsd)
     # TODO : why resample here ?
     # data = data.resample("H").fillna(method="ffill")
 
@@ -92,12 +68,8 @@ def main(net, sta, loc, chan, time_of_weekday=None, period_lim=None, show=False,
         plt.pcolormesh(data.index, ppsd.period_bin_centers, data.T, cmap=cmap,
                        vmin=vmin, vmax=vmax, rasterized=True)
     else:
-        plt.imshow(data.T, cmap=cmap, aspect='auto', origin='lower',
-                   extent=(date2num(new_times[0].to_pydatetime()),
-                           date2num(new_times[-1].to_pydatetime()),
-                           ppsd.period_bin_centers[0],
-                           ppsd.period_bin_centers[-1]),
-                   )
+        plt.pcolormesh(data.index, ppsd.period_bin_centers, data.T, cmap=cmap,
+                       rasterized=True)
 
     cb = plt.colorbar(cax=plt.subplot(gs[3]), use_gridspec=True)
     plt.sca(ax2)

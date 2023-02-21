@@ -128,6 +128,7 @@ modules are properly installed and available for MSNoise.
 """
 
 import json
+import os
 from io import BytesIO
 
 import flask
@@ -142,8 +143,7 @@ from flask_admin.babel import ngettext, lazy_gettext
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.model import typefmt
 from wtforms.validators import ValidationError
-from wtforms.fields import SelectField, StringField, BooleanField
-from wtforms.fields.html5 import DateField
+from wtforms.fields import SelectField, StringField, BooleanField, DateField
 from wtforms.utils import unset_value
 from flask_wtf import Form
 from flask_admin.form import widgets
@@ -195,9 +195,9 @@ class FilterView(ModelView):
     )
     
     column_list = ('ref', 'low', 'mwcs_low', 'mwcs_high', 'high',
-                   'rms_threshold', 'mwcs_wlen', 'mwcs_step', 'used')
+                   'mwcs_wlen', 'mwcs_step', 'used')
     form_columns = ('low', 'mwcs_low', 'mwcs_high', 'high',
-                    'rms_threshold', 'mwcs_wlen', 'mwcs_step', 'used')
+                    'mwcs_wlen', 'mwcs_step', 'used')
     
     def __init__(self, session, **kwargs):
         # You can pass name and other parameters if you want to
@@ -539,6 +539,31 @@ class DataAvailabilityPlot(BaseView):
     def index(self):
         return self.render('admin/data_availability.html')
 
+class PSDPlot(BaseView):
+    name = "MSNoise"
+    view_title = "Probabilistic Power Spectral Density"
+
+    @expose('/')
+    def index(self):
+        return self.render('admin/psd.html')
+
+class PSDTimeline(BaseView):
+    name = "MSNoise"
+    view_title = "Probabilistic Power Spectral Density (Timeline)"
+
+    @expose('/')
+    def index(self):
+        return self.render('admin/ppsd-multi.html')
+
+class PSDSpectrogram(BaseView):
+    name = "MSNoise"
+    view_title = "Power Spectral Density Spectrogram"
+
+    @expose('/')
+    def index(self):
+        return self.render('admin/psd-spectrogram.html')
+
+
 
 class BugReport(BaseView):
     name = "MSNoise"
@@ -559,7 +584,12 @@ def networksJSON():
     networks = get_networks(db)
     for network in networks:
         stations = get_stations(db, net=network)
-        data[network] = [s.sta for s in stations]
+        data[network] = {}
+        for sta in stations:
+            data[network][sta.sta] = {}
+            data[network][sta.sta]["locs"] = sta.locs()
+            data[network][sta.sta]["chans"] = sta.chans()
+        #data[network] = [s.sta for s in stations]
     o = json.dumps(data)
     db.close()
     return flask.Response(o, mimetype='application/json')
@@ -618,7 +648,8 @@ def dataAvail():
     data = flask.request.get_json()
     db = connect()
     data = get_data_availability(db, net=data['net'], sta=data['sta'],
-                                 chan='HHZ')
+                                 loc=data['loc'], chan='HHZ')
+    print(data)
     o = {'dates': [o.starttime.strftime('%Y-%m-%d') for o in data]}
     db.close()
     o['result'] = 'ok'
@@ -711,6 +742,162 @@ def DA_PNG():
     output.seek(0)
     return flask.Response(output.read(), mimetype='image/png')
 
+from flask import send_file, make_response
+import base64
+
+
+@app.route('/admin/PSD.json',methods=['GET','POST'])
+def PSDAvail():
+    data = flask.request.get_json()
+    if not data:
+        data = flask.request.args
+    print(data)
+    fn = os.path.join(os.getcwd(), "PSD", "PNG", "*", data["net"], data["sta"], "%s.D"%data["chan"], "*")
+    files = sorted(glob.glob(fn))
+    o = {}
+    o['files']= [os.path.split(f)[1] for f in files]
+    dates = [datetime.date(int(os.path.split(f)[1].split('.')[5]), 1,
+                   1) + datetime.timedelta(
+        int(os.path.split(f)[1].split('.')[6]) - 1) for f in files]
+    o['dates']= [d.strftime("%Y-%m-%d") for d in dates]
+    o['result'] = 'ok'
+    o = json.dumps(o)
+    return flask.Response(o, mimetype='application/json')
+
+
+@app.route('/admin/PSD.png',methods=['GET','POST'])
+def PSD_PNG():
+    data = flask.request.get_json()
+    if not data:
+        data = flask.request.args
+    file = "*"
+    year = "*"
+    if 'file' in data:
+        file = data["file"]
+    elif 'date' in data:
+        from obspy import UTCDateTime
+        d = UTCDateTime(data['date'])
+        file = ".".join([data["net"], data["sta"], data["loc"], data["chan"],"D","%04i"%d.year, "%03i"%d.julday,"*"])
+        # needed to remove the empty loc ids:
+        file = file.replace("--", "")
+        year = "%04i"%d.year
+    fn = os.path.join(os.getcwd(), "PSD", "PNG", year, data["net"], data["sta"],
+                      "%s.D" % data["chan"], file)
+    print(fn)
+    format = "png"
+    if 'format' in data:
+        format = data["format"]
+
+    files = glob.glob(fn)
+    with open(files[0], "rb") as f:
+        image_binary = f.read()
+        if format == "base64":
+            output = {}
+            output["image"] = base64.b64encode(image_binary).decode("utf-8")
+            o = json.dumps(output)
+            return flask.Response(o, mimetype='application/json')
+
+        else:
+            response = make_response(image_binary)
+            response.headers.set('Content-Type', 'image/png')
+            return response
+
+
+
+@app.route('/admin/PSD-spectrogram.png',methods=['GET','POST'])
+def PSD_spectrogram():
+    import matplotlib.pyplot as plt
+    data = flask.request.get_json()
+    if not data:
+        data = flask.request.args
+
+    format = data.get("format", "png")
+    vmin = data.get("vmin", None, float)
+    vmax = data.get("vmax", None, float)
+    cmap = data.get("cmap", "viridis")
+    fmin = data.get("fmin", None, float)
+    fmax = data.get("fmax", None, float)
+
+    pmin = data.get("pmin", None, float)
+    pmax = data.get("pmax", None, float)
+
+    resample = data.get("resample", None, str)
+    resample_method = data.get("resample_method", "mean", str)
+
+    yaxis = data.get("yaxis", "period", str)
+    yaxis_scale = data.get("yaxis_scale", "linear", str)
+
+    if fmin is not None and pmax is None:
+        pmax = 1.0 / fmin
+
+    if fmax is not None and pmin is None:
+        pmin = 1.0 / fmax
+
+    db = connect()
+    start, end, datelist = build_movstack_datelist(db)
+    db.close()
+
+    # ppsd = psd_read_results(data["net"], data["sta"], data["loc"], data["chan"], datelist)
+    # data = psd_ppsd_to_dataframe(ppsd)
+    seed_id = "%s.%s.%s.%s" % (data["net"], data["sta"], data["loc"], data["chan"])
+    store = hdf_open_store(seed_id, location=os.path.join("PSD", "HDF"), mode="r")
+    data = store.PSD
+    data = data.sort_index()
+    if pmin is not None:
+        data = data.loc[:,pmin:]
+    if pmax is not None:
+        data = data.loc[:, :pmax]
+
+    if yaxis == "frequency":
+        data.columns = 1. / data.columns
+        data = data.sort_index(axis="columns")
+
+
+    if resample is not None:
+        rs = data.resample(resample)
+        if resample_method == "mean":
+            data = rs.mean()
+        elif resample_method == "median":
+            data = rs.median()
+        elif resample_method == "max":
+            data = rs.max()
+        elif resample_method == "min":
+            data = rs.min()
+
+    fig = plt.figure(figsize=(14,7))
+    plt.pcolormesh(data.index, data.columns, data.T, cmap=cmap,
+                   rasterized=True, vmin=vmin, vmax=vmax)
+    plt.colorbar(shrink=0.7).set_label("Amplitude [dB]")
+    if yaxis == "frequency":
+        plt.ylabel("Frequency [Hz]")
+    else:
+        plt.ylabel("Period [s]")
+
+    plt.yscale(yaxis_scale)
+    plt.title("%s: %s - %s" % (seed_id, data.index[0], data.index[-1]))
+
+    fig.autofmt_xdate()
+    plt.tight_layout()
+    from io import BytesIO
+    f = BytesIO()
+    plt.savefig(f, format='png')
+    plt.close("all")
+    f.seek(0)  # rewind to beginning of file
+
+    image_binary = f.read()
+    if format == "base64":
+        output = {}
+        output["image"] = base64.b64encode(image_binary).decode("utf-8")
+        o = json.dumps(output)
+        return flask.Response(o, mimetype='application/json')
+
+    else:
+        response = make_response(image_binary)
+        response.headers.set('Content-Type', 'image/png')
+        return response
+
+
+
 
 @app.route('/admin/data_availability_flags.json')
 def DA_flags():
@@ -750,7 +937,7 @@ def main(port=5000):
     plugins = get_config(db, "plugins")
     db.close()
 
-    admin = Admin(app, template_mode='bootstrap2')
+    admin = Admin(app, template_mode='bootstrap4')
     
     if "msnoise_brand" in os.environ:
         tmp = eval(os.environ["msnoise_brand"])
@@ -778,6 +965,7 @@ def main(port=5000):
     jobtypes = ["CC", "STACK", "MWCS", "DTT"]
     template_folders = []
     if plugins:
+        import pkg_resources
         for ep in pkg_resources.iter_entry_points(group='msnoise.plugins.jobtypes'):
             module_name = ep.module_name.split(".")[0]
             if module_name in plugins:
@@ -812,6 +1000,15 @@ def main(port=5000):
     admin.add_view(ResultPlotter(endpoint='results',category='Results'))
     admin.add_view(InterferogramPlotter(endpoint='interferogram',
                                         category='Results'))
+    admin.add_view(
+        PSDPlot(name="Individual PPSD", endpoint='psd_plot', category='QC'))
+
+    admin.add_view(
+        PSDTimeline(name="Timeline PPSD", endpoint='psd_timeline', category='QC'))
+
+    admin.add_view(
+        PSDSpectrogram(name="PSD Spectrogram", endpoint='psd_spectrogram', category='QC'))
+
 
     if plugins:
         plugins = plugins.split(',')
@@ -829,5 +1026,5 @@ def main(port=5000):
     print("MSNoise admin will run on all interfaces by default")
     print("access it via the machine's IP address or")
     print("via http://127.0.0.1:%i when running locally."%port)
-    app.run(host='0.0.0.0', port=port, debug=False, reloader_interval=1,
+    app.run(host='0.0.0.0', port=port, debug=True, reloader_interval=1,
             threaded=True)
